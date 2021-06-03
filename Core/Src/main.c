@@ -93,7 +93,7 @@ int main(void)
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
 	//SystemInit();
 
-	SCB->VTOR = 0x08002000U;
+	//SCB->VTOR = 0x08002000U;
 
 	HAL_Init();
 
