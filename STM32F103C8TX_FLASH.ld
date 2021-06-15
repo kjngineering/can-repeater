@@ -32,12 +32,16 @@ _estack = ORIGIN(RAM) + LENGTH(RAM);	/* end of "RAM" Ram type memory */
 
 _Min_Heap_Size = 0x200 ;	/* required amount of heap  */
 _Min_Stack_Size = 0x400 ;	/* required amount of stack */
-
+_isr_vecrots_size = 0x110;   /*end of isr vectors table*/
+_boot_program_address = 0x8000000;
+_main_program_address = 0x8002000;
+_boot_program_size = 8k;
+_main_program_size = 56K;
 /* Memories definition */
 MEMORY
 {
   RAM    (xrw)    : ORIGIN = 0x20000000,   LENGTH = 20K
-  FLASH    (rx)    : ORIGIN = 0x8002000,   LENGTH = 56K
+  FLASH    (rx)    : ORIGIN = _main_program_address,   LENGTH = _main_program_size
 }
 
 /* Sections */
@@ -49,6 +53,16 @@ SECTIONS
     . = ALIGN(4);
     KEEP(*(.isr_vector)) /* Startup code */
     . = ALIGN(4);
+  } >FLASH
+
+  _len_address = _main_program_address + _isr_vecrots_size;
+  .length_space _len_address :
+  {
+    . = ALIGN(4);
+    _len_start = .;
+    KEEP(*(.length_space));
+    . = ALIGN(4);
+    _len_end = .;
   } >FLASH
 
   /* The program code and other data into "FLASH" Rom type memory */

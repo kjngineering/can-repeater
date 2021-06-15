@@ -43,7 +43,12 @@
 CAN_HandleTypeDef hcan;
 
 /* USER CODE BEGIN PV */
-
+#ifndef DEBUG
+#define DEBUG 1
+#endif
+#define HARD_LEN_KEY   0xE2E4E6E8
+#define LENGTH_CODE __attribute__ ((section (".length_space")))
+static volatile unsigned long const sofi_debug_len  LENGTH_CODE = HARD_LEN_KEY;
 union Data
 {
  uint8_t  b[8];
@@ -53,13 +58,9 @@ union Data
 
 static CAN_TxHeaderTypeDef canTxMessage;
 
-static CAN_RxHeaderTypeDef canRxMessage;
-
 static CAN_FilterTypeDef sf;
 
 static uint32_t TxMailbox;
-
-static union Data RxData;
 
 static union Data TxData;
 
@@ -75,6 +76,16 @@ static void MX_CAN_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+/* IWDG init function */
+IWDG_HandleTypeDef hiwdg;
+void MX_IWDG_Init(void){    // IWDG_PERIOD = Reload*Prescaler/32000 sec     (8.2 sec)
+    hiwdg.Instance = IWDG;
+    hiwdg.Init.Prescaler = IWDG_PRESCALER_64;
+    hiwdg.Init.Reload = 4095;
+    if (HAL_IWDG_Init(&hiwdg) != HAL_OK){
+
+    }
+}
 
 /* USER CODE END 0 */
 
@@ -105,7 +116,7 @@ int main(void)
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
-
+  MX_IWDG_Init();
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
@@ -143,8 +154,9 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
-
-
+#if DEBUG
+	  HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+#endif
 	  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, GPIO_PIN_RESET);
 
 	  HAL_Delay(1000);
@@ -162,13 +174,13 @@ int main(void)
 	  canTxMessage.TransmitGlobalTime = DISABLE;
 
 	  if (HAL_CAN_AddTxMessage(&hcan, &canTxMessage, TxData.b, &TxMailbox) != HAL_OK) {
-	   Error_Handler();
+	   //Error_Handler();
 	  }
 
 	  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, GPIO_PIN_SET);
 
 	  HAL_Delay(1000);
-
+	  __HAL_IWDG_RELOAD_COUNTER(&hiwdg);
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
@@ -267,12 +279,21 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, GPIO_PIN_RESET);
 
-  /*Configure GPIO pin : PC13 */
+  /*Configure GPIO pin : PB2 */
   GPIO_InitStruct.Pin = GPIO_PIN_2;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+  /*Configure GPIO pin : PC13 */
+#if DEBUG
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+  GPIO_InitStruct.Pin = GPIO_PIN_13;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+#endif
 
 }
 
