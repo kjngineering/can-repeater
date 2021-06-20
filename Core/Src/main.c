@@ -49,6 +49,12 @@ CAN_HandleTypeDef hcan;
 #define HARD_LEN_KEY   0xE2E4E6E8
 #define LENGTH_CODE __attribute__ ((section (".length_space")))
 static volatile unsigned long const sofi_debug_len  LENGTH_CODE = HARD_LEN_KEY;
+extern uint32_t _store_space_address;
+extern uint32_t _store_space_size;
+
+#define STORE_SPACE_ADDRESS_LD ((uint32_t)&_store_space_address)
+#define STORE_SPACE_SIZE_LD ((uint32_t)&_store_space_size)
+
 union Data
 {
  uint8_t  b[8];
