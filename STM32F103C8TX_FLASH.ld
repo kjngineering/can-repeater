@@ -34,10 +34,10 @@ _Min_Heap_Size = 0x200 ;	/* required amount of heap  */
 _Min_Stack_Size = 0x400 ;	/* required amount of stack */
 _isr_vecrots_size = 0x110;   /*end of isr vectors table*/
 _boot_program_address = 0x8000000;
-_store_space_address = 0x8002000;
+_store_space_address = 0x8002400;
 _main_program_address = 0x8002800;
-_boot_program_size = 8k;
-_store_space_size = 2k;
+_boot_program_size = 9k;
+_store_space_size = 1k;
 _main_program_pages = 54;
 _main_program_size = _main_program_pages*1024;
 
