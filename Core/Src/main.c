@@ -19,7 +19,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-
+#include "string.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
@@ -41,7 +41,7 @@
 
 /* Private variables ---------------------------------------------------------*/
 CAN_HandleTypeDef hcan;
-
+static CRC_HandleTypeDef hcrc;
 /* USER CODE BEGIN PV */
 #ifndef DEBUG
 #define DEBUG 1
@@ -55,35 +55,30 @@ extern uint32_t _store_space_size;
 #define STORE_SPACE_ADDRESS_LD ((uint32_t)&_store_space_address)
 #define STORE_SPACE_SIZE_LD ((uint32_t)&_store_space_size)
 
-union Data
-{
- uint8_t  b[8];
- uint16_t d[4];
- uint32_t w[2];
-};
-
+static char default_name[NAME_SIZE] = "default_name";
 static CAN_TxHeaderTypeDef canTxMessage;
-
+static CAN_RxHeaderTypeDef canRxMessage;
+static FLASH_EraseInitTypeDef eraseInitStruct;
 static CAN_FilterTypeDef sf;
-
 static uint32_t TxMailbox;
-
-static union Data TxData;
-
+static union CANData TxData;
+static union CANData RxData;
+static stored_data_t stored_data;
 /* USER CODE END PV */
-
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_CAN_Init(void);
+static void MX_CRC_Init(void);
+static int bkram_init(void);
+static void can_init(void);
+static void transmit_response(uint8_t * response,uint8_t len);
 /* USER CODE BEGIN PFP */
-
 /* USER CODE END PFP */
-
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 /* IWDG init function */
-IWDG_HandleTypeDef hiwdg;
+static IWDG_HandleTypeDef hiwdg;
 void MX_IWDG_Init(void){    // IWDG_PERIOD = Reload*Prescaler/32000 sec     (8.2 sec)
     hiwdg.Instance = IWDG;
     hiwdg.Init.Prescaler = IWDG_PRESCALER_64;
@@ -92,7 +87,90 @@ void MX_IWDG_Init(void){    // IWDG_PERIOD = Reload*Prescaler/32000 sec     (8.2
 
     }
 }
+/**
+ * @brief read stored data from flash
+ */
+static void read_stored_flash(stored_data_t *stored_data){
+    HAL_FLASH_Unlock();
+    memcpy(stored_data->bytes,(void*)STORE_SPACE_ADDRESS_LD,FLASH_PAGE_SIZE);
+    HAL_FLASH_Lock();
+}
+/**
+ * @brief save_stored_struct
+ * @param stored_data
+ * @return none zero value if an error occured
+ */
+static int save_stored_struct(stored_data_t *stored_data){
+    HAL_FLASH_Unlock();
+    uint32_t PageError = 0;
+    eraseInitStruct.TypeErase = TYPEERASE_PAGES;
+    eraseInitStruct.PageAddress = STORE_SPACE_ADDRESS_LD;
+    eraseInitStruct.NbPages = 1;
+    HAL_FLASHEx_Erase(&eraseInitStruct, &PageError);
+    for (uint32_t i = 0; i < sizeof(stored_struct_t); i+=4){
+        HAL_FLASH_Program(TYPEPROGRAM_WORD, STORE_SPACE_ADDRESS_LD + i, stored_data->bytes[i/4]);
+    }
+    HAL_FLASH_Lock();
+    return 0;
+}/**
+ * @brief check_stored_struct
+ * @param stored_data
+ * @return 1 if stored 0- if crc mismatch <0 if error occured
+ */
+static int check_stored_struct(stored_data_t *stored_data){
+    int res = 0;
+    if (stored_data->stored_struct.size_of_table<FLASH_PAGE_SIZE){
+        if(HAL_CRC_Calculate(&hcrc, (void*)stored_data->bytes, (stored_data->stored_struct.size_of_table) / 4)==0){
+            res = 1;
+        }
+    }
+    if (res !=1){
+        //not compared
+        memcpy(stored_data->stored_struct.name,default_name,NAME_SIZE);
+        stored_data->stored_struct.reserv = 0;
+        stored_data->stored_struct.can_address = DEFAULT_DEVICE_CAN_ID;
+        stored_data->stored_struct.security_key = DEFAULT_SEC_KEY;
+        stored_data->stored_struct.can_baud_rate = S6_500KB;
+        stored_data->stored_struct.size_of_table = sizeof(stored_struct_t);
+        stored_data->stored_struct.flash_security = 0;
+        stored_data->stored_struct.main_program_crc = 0;
+        stored_data->stored_struct.main_program_size = 0;
+        stored_data->stored_struct.time_before_start = DEFAULT_TIME_BEFORE_START;
+        stored_data->stored_struct.boot_loader_config = 0;
+        stored_data->stored_struct.flash_write_counter = 0;
+        stored_data->stored_struct.last_flashed_unix_time = 0;
+        stored_data->stored_struct.crc = HAL_CRC_Calculate(&hcrc, (void*)stored_data->bytes, (sizeof(stored_struct_t)-4)/4);
+        res = save_stored_struct(stored_data);
+    }
+    return res;
+}
+static uint8_t command_receive;
+void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan){
+    HAL_CAN_GetRxMessage(hcan,CAN_RX_FIFO0,&canRxMessage,RxData.b);
+    // Skip messages not intended for our device
+    if ((canRxMessage.StdId == stored_data.stored_struct.can_address) ||
+            (canRxMessage.StdId == DEFAULT_DEVICE_CAN_ID)) {
+        if (canRxMessage.DLC==8){
+        }else{
+            command_receive = RxData.b[0];
+        }
+        HAL_GPIO_TogglePin(LED_0_GPIO_PORT, LED_0_PIN);
+    }
+    return;
+}
 
+static void transmit_response(uint8_t * response,uint8_t len){
+    len = len>8?1:len;
+    canTxMessage.StdId = DEFAULT_TX_CAN_ID;
+    canTxMessage.IDE = CAN_ID_STD;
+    canTxMessage.RTR = CAN_RTR_DATA;
+    canTxMessage.DLC = len;
+    canTxMessage.TransmitGlobalTime = DISABLE;
+    memcpy(TxData.b,response,len);
+    if (HAL_CAN_AddTxMessage(&hcan, &canTxMessage, TxData.b, &TxMailbox) != HAL_OK) {
+
+    }
+}
 /* USER CODE END 0 */
 
 /**
@@ -102,90 +180,47 @@ void MX_IWDG_Init(void){    // IWDG_PERIOD = Reload*Prescaler/32000 sec     (8.2
 int main(void)
 {
   /* USER CODE BEGIN 1 */
-
   /* USER CODE END 1 */
-
   /* MCU Configuration--------------------------------------------------------*/
-
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
 	//SystemInit();
-
-	SCB->VTOR = 0x08002800U;
-
-	HAL_Init();
-
+  SCB->VTOR = 0x08002800U;
+  HAL_Init();
   /* USER CODE BEGIN Init */
-
   /* USER CODE END Init */
-
   /* Configure the system clock */
   SystemClock_Config();
-
   /* USER CODE BEGIN SysInit */
   MX_IWDG_Init();
   /* USER CODE END SysInit */
-
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_CAN_Init();
-
-  /* USER CODE BEGIN 2 */
-  //Setup Filter FIFO0
-  sf.FilterMaskIdHigh = 0x0000;
-  sf.FilterMaskIdLow = 0x0000;
-  sf.FilterFIFOAssignment = CAN_FILTER_FIFO0;
-  sf.FilterBank = 0;
-  sf.FilterMode = CAN_FILTERMODE_IDMASK;
-  sf.FilterScale = CAN_FILTERSCALE_32BIT;
-  sf.FilterActivation = ENABLE;
-
-
-
-
-  //Apply Filter to hca
-  if (HAL_CAN_ConfigFilter(&hcan, &sf) != HAL_OK) {
-    Error_Handler();
-  }
-
-
-  //Start CAN Interface
-  if (HAL_CAN_Start(&hcan) != HAL_OK) {
-    Error_Handler();
-  }
-
+  MX_CRC_Init();
+  read_stored_flash(&stored_data);
+  check_stored_struct(&stored_data);
+  bkram_init();
+  can_init();
   /* USER CODE END 2 */
-
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  while (1)
-  {
+  while (1){
     /* USER CODE END WHILE */
 #if DEBUG
 	  HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
 #endif
 	  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, GPIO_PIN_RESET);
-
 	  HAL_Delay(1000);
-
-
-	  TxData.b[0] = 0xDE;
-	  TxData.b[1] = 0xAD;
-	  TxData.b[2] = 0xBE;
-	  TxData.b[3] = 0xEF;
-
-	  canTxMessage.StdId = 127;
-	  canTxMessage.IDE = CAN_ID_STD;
-	  canTxMessage.RTR = CAN_RTR_DATA;
-	  canTxMessage.DLC = 4;
-	  canTxMessage.TransmitGlobalTime = DISABLE;
-
-	  if (HAL_CAN_AddTxMessage(&hcan, &canTxMessage, TxData.b, &TxMailbox) != HAL_OK) {
-	   //Error_Handler();
-	  }
-
+      uint8_t temp[4] = {0xDE,0xAD,0xBE,0xEF};
+      transmit_response(temp, 4);
 	  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, GPIO_PIN_SET);
-
 	  HAL_Delay(1000);
+      if(command_receive==HOST_CMD_SWITCH_TO_BOOT){
+        command_receive = 0;
+        uint8_t temp[2] = {HOST_CMD_START_PAGE_LOAD,DEVICE_RESP_ACKNOWLEDGE};
+        transmit_response(temp, 2);
+        BKP->DR1 = BKRAM_MESSAGE_STAY_IN_BOOT;
+        NVIC_SystemReset();
+      }
 	  __HAL_IWDG_RELOAD_COUNTER(&hiwdg);
     /* USER CODE BEGIN 3 */
   }
@@ -302,9 +337,138 @@ static void MX_GPIO_Init(void)
 #endif
 
 }
-
+static int bkram_init(){
+    HAL_PWR_EnableBkUpAccess();
+    __HAL_RCC_BKP_CLK_ENABLE();
+    return 0;
+}
 /* USER CODE BEGIN 4 */
+/**
+  * @brief CRC Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_CRC_Init(){
+    hcrc.Instance = CRC;
+    if (HAL_CRC_Init(&hcrc) != HAL_OK){
+        Error_Handler();
+    }
+}
 
+/**
+  * @brief CAN Initialization Function
+  * @param None
+  * @retval None
+  */
+static void can_init(void){
+    hcan.Instance = CAN1;
+    /*input freq 24 mhz*/
+/*    10 kBaud Sample Point 75.0 % : 24MHZ / 120 = 200kHz -> TQ 20   SJW + TS1 15 TS2 5
+    20 kBaud Sample Point 75.0 % : 24MHZ /  60 = 400kHz -> TQ 20   SJW + TS1 15 TS2 5
+    50 kBaud Sample Point 75.0 % : 24MHZ /  24 = 1MHz   -> TQ 20   SJW + TS1 15 TS2 5
+   100 kBaud Sample Point 80.0 % : 24MHZ /  24 = 1MHz   -> TQ 10   SJW + TS1  8 TS2 2
+   125 kBaud Sample Point 87.5 % : 24MHZ /  12 = 2MHz   -> TQ 16   SJW + TS1 14 TS2 2
+   250 kBaud Sample Point 87.5 % : 24MHZ /   6 = 4MHz   -> TQ 16   SJW + TS1 14 TS2 2
+   500 kBaud Sample Point 87.5 % : 24MHZ /   6 = 4MHz   -> TQ  8   SJW + TS1  7 TS2 1
+   800 kBaud Sample Point 86.7 % : 24MHZ /   2 = 12MHz  -> TQ 15   SJW + TS1 13 TS2 2
+  1000 kBaud Sample Point 88.9 % : 24MHZ /   2 = 12MHz  -> TQ 18   SJW + TS1 8 TS2 3
+*/
+    switch(stored_data.stored_struct.can_baud_rate) {
+    case S0_10KB:
+        hcan.Init.Prescaler = 120;
+        hcan.Init.SyncJumpWidth = CAN_SJW_1TQ;
+        hcan.Init.TimeSeg1 = CAN_BS1_14TQ;
+        hcan.Init.TimeSeg2 = CAN_BS2_5TQ;
+        break;
+    case S1_20KB:
+        hcan.Init.Prescaler = 60;
+        hcan.Init.SyncJumpWidth = CAN_SJW_1TQ;
+        hcan.Init.TimeSeg1 = CAN_BS1_14TQ;
+        hcan.Init.TimeSeg2 = CAN_BS2_5TQ;
+        break;
+    case S2_50KB:
+        hcan.Init.Prescaler = 24;
+        hcan.Init.SyncJumpWidth = CAN_SJW_1TQ;
+        hcan.Init.TimeSeg1 = CAN_BS1_14TQ;
+        hcan.Init.TimeSeg2 = CAN_BS2_5TQ;
+        break;
+    case S3_100KB:
+        hcan.Init.Prescaler = 24;
+        hcan.Init.SyncJumpWidth = CAN_SJW_1TQ;
+        hcan.Init.TimeSeg1 = CAN_BS1_8TQ;
+        hcan.Init.TimeSeg2 = CAN_BS2_2TQ;
+        break;
+    case S4_125KB:
+        hcan.Init.Prescaler = 12;
+        hcan.Init.SyncJumpWidth = CAN_SJW_1TQ;
+        hcan.Init.TimeSeg1 = CAN_BS1_13TQ;
+        hcan.Init.TimeSeg2 = CAN_BS2_2TQ;
+        break;
+    case S5_250KB:
+        hcan.Init.Prescaler = 6;
+        hcan.Init.SyncJumpWidth = CAN_SJW_1TQ;
+        hcan.Init.TimeSeg1 = CAN_BS1_13TQ;
+        hcan.Init.TimeSeg2 = CAN_BS2_2TQ;
+        break;
+    case S6_500KB:
+        hcan.Init.Prescaler = 6;
+        hcan.Init.SyncJumpWidth = CAN_SJW_1TQ;
+        hcan.Init.TimeSeg1 = CAN_BS1_7TQ;
+        hcan.Init.TimeSeg2 = CAN_BS2_1TQ;
+       break;
+    case S7_800KB:
+        hcan.Init.Prescaler = 2;
+        hcan.Init.SyncJumpWidth = CAN_SJW_1TQ;
+        hcan.Init.TimeSeg1 = CAN_BS1_12TQ;
+        hcan.Init.TimeSeg2 = CAN_BS2_2TQ;
+        break;
+    case S8_1000KB:
+        hcan.Init.Prescaler = 2;
+        hcan.Init.SyncJumpWidth = CAN_SJW_1TQ;
+        hcan.Init.TimeSeg1 = CAN_BS1_8TQ;
+        hcan.Init.TimeSeg2 = CAN_BS2_3TQ;
+        break;
+    default:
+        hcan.Init.Prescaler = 6;
+        hcan.Init.SyncJumpWidth = CAN_SJW_1TQ;
+        hcan.Init.TimeSeg1 = CAN_BS1_7TQ;
+        hcan.Init.TimeSeg2 = CAN_BS2_1TQ;
+        break;
+    }
+
+    hcan.Init.Mode = CAN_MODE_NORMAL;
+    hcan.Init.TimeTriggeredMode = DISABLE;
+    hcan.Init.AutoBusOff = DISABLE;
+    hcan.Init.AutoWakeUp = DISABLE;
+    hcan.Init.AutoRetransmission = ENABLE;
+    hcan.Init.ReceiveFifoLocked = DISABLE;
+    hcan.Init.TransmitFifoPriority = DISABLE;
+    if (HAL_CAN_Init(&hcan) != HAL_OK)  {
+        Error_Handler();
+    }
+    sf.FilterIdHigh = 0x0000;
+    sf.FilterIdLow = 0x0000;
+    sf.FilterMaskIdHigh = 0x0000;
+    sf.FilterMaskIdLow = 0x0000;
+    sf.FilterFIFOAssignment = CAN_FILTER_FIFO0;
+    sf.FilterBank = 0;
+    sf.FilterMode = CAN_FILTERMODE_IDMASK;
+    sf.FilterScale = CAN_FILTERSCALE_32BIT;
+    sf.FilterActivation = ENABLE;
+    sf.SlaveStartFilterBank = 14;
+    //Apply Filter to hca
+    if (HAL_CAN_ConfigFilter(&hcan, &sf) != HAL_OK) {
+        Error_Handler();
+    }
+    //Start CAN Interface
+    if (HAL_CAN_Start(&hcan) != HAL_OK) {
+        Error_Handler();
+    }
+    //Attach Interrupts/Callbacks
+    if (HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING) != HAL_OK) {
+        Error_Handler();
+    }
+}
 /* USER CODE END 4 */
 
 /**

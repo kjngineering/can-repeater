@@ -1,5 +1,5 @@
 ﻿cmake_minimum_required(VERSION 3.6)
-set(PRJ_NAME can_appl)
+set(PRJ_NAME can_main)
 include(STM32Toolchain.cmake)
 
 set(MCU_FAMILY STM32F1xx)
