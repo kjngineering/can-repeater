@@ -209,7 +209,7 @@ int main(void)
 	  HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
 #endif
 	  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, GPIO_PIN_RESET);
-	  HAL_Delay(1000);
+      HAL_Delay(2000);
       uint8_t temp[4] = {0xDE,0xAD,0xBE,0xEF};
       transmit_response(temp, 4);
 	  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, GPIO_PIN_SET);

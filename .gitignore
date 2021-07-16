@@ -2,3 +2,10 @@
 Debug/
 Release/
 scrap code
+cmake_arm/
+build/
+*.o
+*.orig
+*.cold
+CMakeLists.txt.user
+

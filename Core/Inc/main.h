@@ -37,7 +37,7 @@ extern "C" {
 
 /* Exported types ------------------------------------------------------------*/
 /* USER CODE BEGIN ET */
-#define NAME_SIZE 14
+#define NAME_SIZE 18
 #define BKRAM_MESSAGE_STAY_IN_BOOT (uint16_t)0x1989
 #define DEFAULT_DEVICE_CAN_ID                           0x78E
 #define DEFAULT_TX_CAN_ID                           	0x78F
@@ -60,14 +60,21 @@ typedef enum {
     HOST_CMD_GET_GUID 		    = 0x04,/*!< crc id - u32 size*/
     HOST_CMD_END_PAGE_LOAD      = 0x05,
     HOST_CMD_GET_NAME           = 0x06,
-    HOST_CMD_GET_APPL_INFO      = 0x07,/*!< size and crc*/
-    HOST_CMD_GET_CAN_INFO       = 0x08,/*!< addres and baud rate*/
-    HOST_CMD_GET_COUNT_AND_TIME_INFO       = 0x09,/*!< counter and unix time*/
-    HOST_CMD_SET_NAME1           = 0x0a,/*!< set first part of name*/
-    HOST_CMD_SET_NAME2           = 0x0b,/*!< set second part of name*/
-    HOST_CMD_SET_CAN_INFO        = 0x0c,/*!< set size and crc*/
-    HOST_CMD_SET_TIME            = 0x0d,/*!< set unix time*/
-    HOST_CMD_SWITCH_TO_BOOT      = 0x0e,/*!< controller will switch and stay into boot mode*/
+    HOST_CMD_GET_APPL_SIZE      = 0x07,
+    HOST_CMD_GET_APPL_CRC      = 0x08,
+    HOST_CMD_GET_CAN_ADDRESS       = 0x09,
+    HOST_CMD_GET_CAN_SPEED       = 0x0a,
+    HOST_CMD_GET_COUNT_INFO       = 0x0b,
+    HOST_CMD_GET_UNIX_TIME_INFO       = 0x0c,
+    HOST_CMD_SET_NAME1           = 0x0d,
+    HOST_CMD_SET_NAME2           = 0x0e,
+    HOST_CMD_SET_NAME3           = 0x0f,
+    HOST_CMD_SET_CAN_ADDRESS     = 0x10,
+    HOST_CMD_SET_CAN_SPEED     = 0x11,
+    HOST_CMD_SET_UNIX_TIME            = 0x12,
+    HOST_CMD_SWITCH_TO_BOOT      = 0x13,
+    HOST_CMD_GET_TIME_BEFORE_START       = 0x14,
+    HOST_CMD_SET_TIME_BEFORE_START       = 0x15,
 }host_commands_t;
 
 typedef enum {
