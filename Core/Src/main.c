@@ -44,16 +44,19 @@ CAN_HandleTypeDef hcan;
 static CRC_HandleTypeDef hcrc;
 /* USER CODE BEGIN PV */
 #ifndef DEBUG
-#define DEBUG 1
+#define DEBUG 0
 #endif
 #define HARD_LEN_KEY   0xE2E4E6E8
 #define LENGTH_CODE __attribute__ ((section (".length_space")))
 static volatile unsigned long const sofi_debug_len  LENGTH_CODE = HARD_LEN_KEY;
 extern uint32_t _store_space_address;
 extern uint32_t _store_space_size;
+extern uint32_t _main_program_pages;
+static uint32_t crc_id = 0;
 
 #define STORE_SPACE_ADDRESS_LD ((uint32_t)&_store_space_address)
 #define STORE_SPACE_SIZE_LD ((uint32_t)&_store_space_size)
+#define APP_PAGES ((uint32_t)&_main_program_pages)
 
 static char default_name[NAME_SIZE] = "default_name";
 static CAN_TxHeaderTypeDef canTxMessage;
@@ -68,11 +71,12 @@ static stored_data_t stored_data;
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
-static void MX_CAN_Init(void);
+static uint32_t calc_id_crc(void);
 static void MX_CRC_Init(void);
 static int bkram_init(void);
 static void can_init(void);
 static void transmit_response(uint8_t * response,uint8_t len);
+static void transmit_data(uint32_t id,uint8_t * response,uint8_t len);
 /* USER CODE BEGIN PFP */
 /* USER CODE END PFP */
 /* Private user code ---------------------------------------------------------*/
@@ -171,6 +175,30 @@ static void transmit_response(uint8_t * response,uint8_t len){
 
     }
 }
+
+static void transmit_data(uint32_t id,uint8_t * response,uint8_t len){
+    len = len>8?1:len;
+
+
+   //write some ID extension in here -- if ID > 0x7ff then switch to extended. If ID > extended range 2^29 exemption.
+
+    canTxMessage.StdId = id;
+    canTxMessage.IDE = CAN_ID_STD;
+    canTxMessage.RTR = CAN_RTR_DATA;
+    canTxMessage.DLC = len;
+    canTxMessage.TransmitGlobalTime = DISABLE;
+    memcpy(TxData.b,response,len);
+    if (HAL_CAN_AddTxMessage(&hcan, &canTxMessage, TxData.b, &TxMailbox) != HAL_OK) {
+
+    }
+}
+
+static uint32_t calc_id_crc(){
+    uint8_t temp_buff[12] = {0};
+    memcpy(temp_buff,(uint8_t*)UID_BASE,12);
+    uint32_t crc_mac = HAL_CRC_Calculate(&hcrc,(void*)temp_buff, 12/4);
+    return crc_mac;
+}
 /* USER CODE END 0 */
 
 /**
@@ -196,6 +224,7 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_CRC_Init();
+  crc_id = calc_id_crc();
   read_stored_flash(&stored_data);
   check_stored_struct(&stored_data);
   bkram_init();
@@ -211,9 +240,10 @@ int main(void)
 	  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, GPIO_PIN_RESET);
       HAL_Delay(2000);
       uint8_t temp[4] = {0xDE,0xAD,0xBE,0xEF};
-      transmit_response(temp, 4);
+      transmit_data(0x123,temp, 4);
 	  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, GPIO_PIN_SET);
 	  HAL_Delay(1000);
+
       if(command_receive==HOST_CMD_SWITCH_TO_BOOT){
         command_receive = 0;
         uint8_t temp[2] = {HOST_CMD_START_PAGE_LOAD,DEVICE_RESP_ACKNOWLEDGE};
@@ -221,7 +251,25 @@ int main(void)
         BKP->DR1 = BKRAM_MESSAGE_STAY_IN_BOOT;
         NVIC_SystemReset();
       }
+
+
+      if (command_receive==HOST_CMD_GET_GUID){
+        command_receive = 0;
+        uint8_t temp[8];
+        temp[0] = HOST_CMD_GET_GUID;
+        temp[1] = DEVICE_TYPE_F103;
+        temp[2] = DEVICE_STATUS_APP;
+        temp[3] = APP_PAGES;
+		memcpy(&temp[4],&crc_id,4);
+        transmit_response((uint8_t*)temp, 8);
+      }
+
+
+
+
+
 	  __HAL_IWDG_RELOAD_COUNTER(&hiwdg);
+
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
@@ -270,37 +318,6 @@ void SystemClock_Config(void)
   * @param None
   * @retval None
   */
-static void MX_CAN_Init(void)
-{
-
-  /* USER CODE BEGIN CAN_Init 0 */
-
-  /* USER CODE END CAN_Init 0 */
-
-  /* USER CODE BEGIN CAN_Init 1 */
-
-  /* USER CODE END CAN_Init 1 */
-  hcan.Instance = CAN1;
-  hcan.Init.Prescaler = 3;
-  hcan.Init.Mode = CAN_MODE_NORMAL;
-  hcan.Init.SyncJumpWidth = CAN_SJW_1TQ;
-  hcan.Init.TimeSeg1 = CAN_BS1_13TQ;
-  hcan.Init.TimeSeg2 = CAN_BS2_2TQ;
-  hcan.Init.TimeTriggeredMode = DISABLE;
-  hcan.Init.AutoBusOff = DISABLE;
-  hcan.Init.AutoWakeUp = DISABLE;
-  hcan.Init.AutoRetransmission = DISABLE;
-  hcan.Init.ReceiveFifoLocked = DISABLE;
-  hcan.Init.TransmitFifoPriority = DISABLE;
-  if (HAL_CAN_Init(&hcan) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN CAN_Init 2 */
-
-  /* USER CODE END CAN_Init 2 */
-
-}
 
 /**
   * @brief GPIO Initialization Function
@@ -411,10 +428,10 @@ static void can_init(void){
         hcan.Init.TimeSeg2 = CAN_BS2_2TQ;
         break;
     case S6_500KB:
-        hcan.Init.Prescaler = 6;
+        hcan.Init.Prescaler = 3;
         hcan.Init.SyncJumpWidth = CAN_SJW_1TQ;
-        hcan.Init.TimeSeg1 = CAN_BS1_7TQ;
-        hcan.Init.TimeSeg2 = CAN_BS2_1TQ;
+        hcan.Init.TimeSeg1 = CAN_BS1_13TQ;
+        hcan.Init.TimeSeg2 = CAN_BS2_2TQ;
        break;
     case S7_800KB:
         hcan.Init.Prescaler = 2;

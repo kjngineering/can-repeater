@@ -86,6 +86,17 @@ typedef enum {
     DEVICE_RESP_PAGE_END_ACKNOWLEDGE      = 0x07,/*!< acknowledge command*/
 }device_commands_t;
 
+
+typedef enum {
+    DEVICE_TYPE_F103                          = 0x01,
+}device_type_t;
+
+typedef enum {
+    DEVICE_STATUS_BL                          = 0x01,
+    DEVICE_STATUS_APP                          = 0x02,
+}device_status_t;
+
+
 typedef struct MCU_PACK{
     uint32_t size_of_table;
     uint32_t main_program_size;
